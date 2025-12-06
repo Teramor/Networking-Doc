@@ -38,3 +38,73 @@ Get-Content "$env:USERPROFILE\.ssh\remote_backup.pub"
 
                        Then copy the single line content(starts with ssh-ed25519)
 ------------------------------------------------END-------------------------------------------------
+
+
+START--------------------------------
+
+THEN SAVE THIS FILE ANYWHERE IN THE SYSTEM WITH .bat extension
+-----------------------------------------------------------------
+
+@echo off
+setlocal enableextensions enabledelayedexpansion
+
+REM ======== CONFIG: EDIT ONLY THESE 5 LINES (NO QUOTES) ========
+set SRC=
+set HOST=124.123.30.198
+set USER=backup
+set KEY=%USERPROFILE%\.ssh\remote_backup
+set DEST=
+REM =============================================================
+
+set "SFTP=%SystemRoot%\System32\OpenSSH\sftp.exe"
+if not exist "%SFTP%" (
+  echo [ERROR] sftp.exe not found at %SFTP%
+  exit /b 1
+)
+
+REM ---- normalize SRC (strip surrounding quotes if user added them) ----
+set "SRC_RAW=%SRC%"
+if "%SRC_RAW:~0,1%"=="^"" set "SRC_RAW=%SRC_RAW:~1%"
+if "%SRC_RAW:~-1%"=="^"" set "SRC_RAW=%SRC_RAW:~0,-1%"
+
+REM ---- try to get an 8.3 short path to avoid Unicode/space issues ----
+for %%I in ("%SRC_RAW%") do set "SRC_SHORT=%%~sI"
+if not defined SRC_SHORT set "SRC_SHORT=%SRC_RAW%"
+
+REM ---- convert backslashes -> forward slashes for SFTP ----
+set "SRC_POSIX=%SRC_SHORT:\=/%"
+
+REM ---- logs ----
+set "LOGDIR=%~dp0logs"
+if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+for /f "tokens=1-3 delims=/:. " %%a in ("%date% %time%") do set "STAMP=%%a_%%b_%%c"
+set "LOG=%LOGDIR%\upload_%STAMP%.log"
+
+REM ---- build SFTP batch file ----
+set "SFTPBATCH=%TEMP%\sftp_cmds_%RANDOM%.txt"
+>  "%SFTPBATCH%" echo -mkdir "%DEST%"
+>> "%SFTPBATCH%" echo put -r "%SRC_POSIX%" "%DEST%"
+
+echo [INFO] Using sftp: "%SFTP%"
+echo [INFO] Uploading "%SRC_RAW%"  to %USER%@%HOST%:%DEST%
+echo [INFO] Log: "%LOG%"
+
+REM ---- run sftp (all options BEFORE destination!) ----
+"%SFTP%" ^
+  -b "%SFTPBATCH%" ^
+  -o "IdentityFile=%KEY%" ^
+  -o "IdentitiesOnly=yes" ^
+  -o "StrictHostKeyChecking=no" ^
+  -o "UserKnownHostsFile=NUL" ^
+  %USER%@%HOST% 1>>"%LOG%" 2>&1
+
+set "ERR=%ERRORLEVEL%"
+del "%SFTPBATCH%" >nul 2>&1
+
+if %ERR% neq 0 (
+  echo [ERROR] SFTP exited with %ERR%. See log: "%LOG%"
+  exit /b %ERR%
+) else (
+  echo [OK] Upload complete. See log: "%LOG%"
+)
+endlocal
